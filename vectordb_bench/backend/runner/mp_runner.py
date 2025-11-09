@@ -190,13 +190,23 @@ class MultiProcessingSearchRunner:
         """
         return self._run_by_dur(duration)
 
-    def _run_by_dur(self, duration: int) -> tuple[float, float]:
+    def _run_by_dur(self, duration: int) -> tuple[float, float, list, list, list, list, list]:
         """
         Returns:
             float: largest qps
             float: failed rate
+            list: concurrency numbers
+            list: qps values at each concurrency
+            list: p99 latencies at each concurrency
+            list: p95 latencies at each concurrency
+            list: avg latencies at each concurrency
         """
         max_qps = 0
+        conc_num_list = []
+        conc_qps_list = []
+        conc_latency_p99_list = []
+        conc_latency_p95_list = []
+        conc_latency_avg_list = []
         try:
             for conc in self.concurrencies:
                 with mp.Manager() as m:
@@ -226,9 +236,34 @@ class MultiProcessingSearchRunner:
                         cost = time.perf_counter() - start
 
                         qps = round(all_success_count / cost, 4)
+                        
+                        # Collect and calculate latencies
+                        all_latencies = []
+                        for r in res:
+                            if len(r) > 2 and r[2]:  # Has latency data
+                                all_latencies.extend(r[2])
+                        
+                        # Calculate percentiles
+                        if all_latencies:
+                            latency_p99 = np.percentile(all_latencies, 99)
+                            latency_p95 = np.percentile(all_latencies, 95)
+                            latency_avg = np.mean(all_latencies)
+                        else:
+                            latency_p99 = 0
+                            latency_p95 = 0
+                            latency_avg = 0
+                        
+                        # Store in lists
+                        conc_num_list.append(conc)
+                        conc_qps_list.append(qps)
+                        conc_latency_p99_list.append(latency_p99)
+                        conc_latency_p95_list.append(latency_p95)
+                        conc_latency_avg_list.append(latency_avg)
+                        
                         log.info(
                             f"End search in concurrency {conc}: dur={cost}s, failed_rate={failed_rate}, "
-                            f"all_success_count={all_success_count}, all_failed_count={all_failed_count}, qps={qps}",
+                            f"all_success_count={all_success_count}, all_failed_count={all_failed_count}, qps={qps}, "
+                            f"p99={latency_p99:.4f}s, p95={latency_p95:.4f}s, avg={latency_avg:.4f}s",
                         )
                 if qps > max_qps:
                     max_qps = qps
@@ -246,13 +281,22 @@ class MultiProcessingSearchRunner:
         finally:
             self.stop()
 
-        return max_qps, failed_rate
+        return (
+            max_qps,
+            failed_rate,
+            conc_num_list,
+            conc_qps_list,
+            conc_latency_p99_list,
+            conc_latency_p95_list,
+            conc_latency_avg_list,
+        )
 
-    def search_by_dur(self, dur: int, test_data: list[list[float]], q: mp.Queue, cond: mp.Condition) -> tuple[int, int]:
+    def search_by_dur(self, dur: int, test_data: list[list[float]], q: mp.Queue, cond: mp.Condition) -> tuple[int, int, list]:
         """
         Returns:
             int: successful requests count
             int: failed requests count
+            list: latencies of successful requests
         """
         # sync all process
         q.put(1)
@@ -266,11 +310,13 @@ class MultiProcessingSearchRunner:
             start_time = time.perf_counter()
             success_count = 0
             failed_cnt = 0
+            latencies = []
             while time.perf_counter() < start_time + dur:
                 s = time.perf_counter()
                 try:
                     self.db.search_embedding(test_data[idx], self.k)
                     success_count += 1
+                    latencies.append(time.perf_counter() - s)
                 except Exception as e:
                     failed_cnt += 1
                     # reduce log
@@ -295,4 +341,4 @@ class MultiProcessingSearchRunner:
             f"qps (successful) in this process: {round(success_count / total_dur, 4):3}",
         )
 
-        return success_count, failed_cnt
+        return success_count, failed_cnt, latencies
