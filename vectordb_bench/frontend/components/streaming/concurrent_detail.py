@@ -16,7 +16,7 @@ def drawConcurrentPerformanceSection(container, case_data, case_name: str):
     container.markdown("---")
     container.subheader("🔍 Concurrent Performance Detail")
     container.markdown(
-        "Detailed QPS → Latency relationship at each stage. "
+        "Detailed Latency → QPS relationship at each stage. "
         "Shows how search performance changes with different load levels."
     )
     
@@ -35,7 +35,7 @@ def drawConcurrentPerformanceSection(container, case_data, case_name: str):
 
 
 def drawSingleStageView(container, case_data, case_name: str):
-    """Show detailed QPS→Latency for one selected stage"""
+    """Show detailed Latency→QPS for one selected stage"""
     
     stages = case_data["st_search_stage_list"]
     
@@ -105,29 +105,29 @@ def drawSingleStageView(container, case_data, case_name: str):
 
 
 def drawQPSLatencyChart(container, qps_values, latencies_ms, stage, metric_name, case_name):
-    """Draw QPS vs Latency scatter plot"""
+    """Draw Latency vs QPS scatter plot"""
     
     fig = go.Figure()
     
     fig.add_trace(go.Scatter(
-        x=qps_values,
-        y=latencies_ms,
+        x=latencies_ms,
+        y=qps_values,
         mode='lines+markers+text',
         text=[f"{qps:.1f}" for qps in qps_values],
         textposition="top center",
         marker=dict(size=12, color='#1f77b4'),
         line=dict(width=2, color='#1f77b4'),
         hovertemplate=(
-            "QPS: %{x:.1f}<br>"
-            f"{metric_name} Latency: %{{y:.1f}}ms<br>"
+            "QPS: %{y:.1f}<br>"
+            f"{metric_name} Latency: %{{x:.1f}}ms<br>"
             "<extra></extra>"
         ),
     ))
     
     fig.update_layout(
-        title=f"QPS vs Latency at Stage {stage}%",
-        xaxis_title="Queries Per Second (QPS)",
-        yaxis_title=f"Latency {metric_name} (ms)",
+        title=f"Latency vs QPS at Stage {stage}%",
+        xaxis_title=f"Latency {metric_name} (ms)",
+        yaxis_title="Queries Per Second (QPS)",
         height=500,
         hovermode='closest',
         showlegend=False,
@@ -227,16 +227,16 @@ def drawComparisonChart(container, case_data, selected_stages, metric_name, case
         stages_plotted += 1
         
         fig.add_trace(go.Scatter(
-            x=qps_values,
-            y=latencies_ms,
+            x=latencies_ms,
+            y=qps_values,
             mode='lines+markers',
             name=f"{stage}% loaded",
             marker=dict(size=10),
             line=dict(width=2, color=colors[idx % len(colors)]),
             hovertemplate=(
                 f"Stage {stage}%<br>"
-                "QPS: %{x:.1f}<br>"
-                f"{metric_name} Latency: %{{y:.1f}}ms<br>"
+                "QPS: %{y:.1f}<br>"
+                f"{metric_name} Latency: %{{x:.1f}}ms<br>"
                 "<extra></extra>"
             ),
         ))
@@ -259,9 +259,9 @@ def drawComparisonChart(container, case_data, selected_stages, metric_name, case
         )
     
     fig.update_layout(
-        title=f"QPS vs Latency Evolution Across Stages",
-        xaxis_title="Queries Per Second (QPS)",
-        yaxis_title=f"Latency {metric_name} (ms)",
+        title=f"Latency vs QPS Evolution Across Stages",
+        xaxis_title=f"Latency {metric_name} (ms)",
+        yaxis_title="Queries Per Second (QPS)",
         height=600,
         hovermode='closest',
         legend=dict(
