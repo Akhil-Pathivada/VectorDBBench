@@ -161,9 +161,37 @@ def get_custom_case_cluter() -> UICaseItemCluster:
     return UICaseItemCluster(label="Custom Search Performance Test", uiCaseItems=get_custom_case_items())
 
 
+def get_custom_streaming_case_items() -> list[UICaseItem]:
+    from vectordb_bench.frontend.components.custom.getCustomConfig import get_custom_streaming_configs
+    
+    custom_streaming_configs = get_custom_streaming_configs()
+    return [
+        UICaseItem(
+            label=f"{custom_config.dataset_config.name} - Streaming",
+            description=f"Streaming test with custom dataset: {custom_config.dataset_config.name}",
+            cases=[
+                CaseConfig(
+                    case_id=CaseType.StreamingCustomDataset,
+                    custom_case={
+                        "description": custom_config.description,
+                        "dataset_config": custom_config.dataset_config.dict(),
+                    },
+                )
+            ],
+            caseLabel=CaseLabel.Streaming,
+            extra_custom_case_config_inputs=custom_streaming_config_no_dataset,
+        )
+        for custom_config in custom_streaming_configs
+    ]
+
+
+def get_custom_streaming_case_cluster() -> UICaseItemCluster:
+    return UICaseItemCluster(label="Custom Streaming Test", uiCaseItems=get_custom_streaming_case_items())
+
+
 def generate_custom_streaming_case() -> CaseConfig:
     return CaseConfig(
-        case_id=CaseType.StreamingPerformanceCase,
+        case_id=CaseType.StreamingCustomDataset,
         custom_case=dict(),
     )
 
@@ -175,6 +203,40 @@ custom_streaming_config: list[ConfigInput] = [
         inputType=InputType.Option,
         inputConfig=dict(options=[dataset.value for dataset in DatasetWithSizeType]),
     ),
+    ConfigInput(
+        label=CaseConfigParamType.insert_rate,
+        inputType=InputType.Number,
+        inputConfig=dict(step=100, min=100, max=4_000, value=200),
+        inputHelp="fixed insertion rate (rows/s), must be divisible by 100",
+    ),
+    ConfigInput(
+        label=CaseConfigParamType.search_stages,
+        inputType=InputType.Text,
+        inputConfig=dict(value="[0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9]"),
+        inputHelp="0<=stage<1.0; do search test when inserting a specified amount of data.",
+    ),
+    ConfigInput(
+        label=CaseConfigParamType.concurrencies,
+        inputType=InputType.Text,
+        inputConfig=dict(value="[5, 10, 20]"),
+        inputHelp="concurrent num of search test while insertion; record max-qps.",
+    ),
+    ConfigInput(
+        label=CaseConfigParamType.optimize_after_write,
+        inputType=InputType.Option,
+        inputConfig=dict(options=[True, False]),
+        inputHelp="whether to optimize after inserting all data",
+    ),
+    ConfigInput(
+        label=CaseConfigParamType.read_dur_after_write,
+        inputType=InputType.Number,
+        inputConfig=dict(step=10, min=30, max=360_000, value=30),
+        inputHelp="search test duration after inserting all data",
+    ),
+]
+
+# Config for custom streaming tests (without predefined dataset dropdown)
+custom_streaming_config_no_dataset: list[ConfigInput] = [
     ConfigInput(
         label=CaseConfigParamType.insert_rate,
         inputType=InputType.Number,
