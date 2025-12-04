@@ -78,7 +78,8 @@ def isLowerIsBetterMetric(metric: str) -> bool:
     return metric in lower_is_better_metrics
 
 
-def calc_recall(count: int, ground_truth: list[int], got: list[int]) -> float:
+def calc_recall(count: int, ground_truth: list[int] | list[str], got: list[int] | list[str]) -> float:
+    """Calculate recall - works with both int and string IDs."""
     recalls = np.zeros(count)
     for i, result in enumerate(got):
         if result in ground_truth:

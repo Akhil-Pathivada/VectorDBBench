@@ -88,6 +88,7 @@ class BulkInsertManager:
         vector_col_name: str,
         label_col_name: str,
         with_scalar_labels: bool,
+        extra_metadata_fields: dict[str, list] | None = None,
     ) -> list[dict[str, Any]]:
         """Prepare bulk actions for OpenSearch bulk insert."""
         if len(embeddings) != len(metadata):
@@ -108,6 +109,10 @@ class BulkInsertManager:
             other_data = {vector_col_name: embeddings[i]}
             if with_scalar_labels and labels_data:
                 other_data[label_col_name] = labels_data[i]
+            # Add extra metadata fields to document
+            if extra_metadata_fields:
+                for field_name, field_values in extra_metadata_fields.items():
+                    other_data[field_name] = field_values[i]
             insert_data.append(other_data)
         return insert_data
 
@@ -314,6 +319,18 @@ class OSSOpenSearch(VectorDB):
             properties[self.id_col_name] = {"type": "integer", "store": True}
 
         properties[self.label_col_name] = {"type": "keyword"}
+
+        # Custom ticket metadata fields (hardcoded for ticket dataset)
+        properties["_tenant"] = {"type": "keyword", "ignore_above": 256}
+        properties["account_id"] = {"type": "long"}
+        properties["workspace_id"] = {"type": "keyword"}
+        properties["ticket_id"] = {"type": "keyword"}
+        properties["ticket_type"] = {"type": "keyword"}
+        properties["ticket_status"] = {"type": "keyword"}
+        properties["catalog_item_ids"] = {"type": "long"}
+        properties["created_at"] = {"type": "date", "format": "strict_date_optional_time"}
+
+        # Embedding field - dynamic from UI config (engine, M, efConstruction, etc.)
         properties[self.vector_col_name] = {
             "type": "knn_vector",
             "dimension": self.dim,
@@ -348,6 +365,7 @@ class OSSOpenSearch(VectorDB):
         embeddings: Iterable[list[float]],
         metadata: list[int],
         labels_data: list[str] | None = None,
+        extra_metadata_fields: dict[str, list] | None = None,
     ) -> list[dict]:
         """Prepare the list of bulk actions for OpenSearch bulk insert."""
         bulk_manager = self._get_bulk_manager(self.client)
@@ -359,6 +377,7 @@ class OSSOpenSearch(VectorDB):
             self.vector_col_name,
             self.label_col_name,
             self.with_scalar_labels,
+            extra_metadata_fields,
         )
 
     def insert_embeddings(
@@ -366,6 +385,7 @@ class OSSOpenSearch(VectorDB):
         embeddings: Iterable[list[float]],
         metadata: list[int],
         labels_data: list[str] | None = None,
+        extra_metadata_fields: dict[str, list] | None = None,
         **kwargs: Any,
     ) -> tuple[int, Exception | None]:
         """Insert embeddings into the OpenSearch index."""
@@ -376,18 +396,19 @@ class OSSOpenSearch(VectorDB):
 
         if num_clients <= 1:
             log.info("Using single client for data insertion")
-            return self._insert_with_single_client(embeddings, metadata, labels_data)
+            return self._insert_with_single_client(embeddings, metadata, labels_data, extra_metadata_fields)
         log.info(f"Using {num_clients} parallel clients for data insertion")
-        return self._insert_with_multiple_clients(embeddings, metadata, num_clients, labels_data)
+        return self._insert_with_multiple_clients(embeddings, metadata, num_clients, labels_data, extra_metadata_fields)
 
     def _insert_with_single_client(
         self,
         embeddings: Iterable[list[float]],
         metadata: list[int],
         labels_data: list[str] | None = None,
+        extra_metadata_fields: dict[str, list] | None = None,
     ) -> tuple[int, Exception | None]:
         """Insert data using a single client with retry logic."""
-        insert_data = self._prepare_bulk_data(embeddings, metadata, labels_data)
+        insert_data = self._prepare_bulk_data(embeddings, metadata, labels_data, extra_metadata_fields)
         bulk_manager = self._get_bulk_manager(self.client)
         return bulk_manager.execute_single_client_insert(insert_data)
 
@@ -397,6 +418,7 @@ class OSSOpenSearch(VectorDB):
         metadata: list[int],
         num_clients: int,
         labels_data: list[str] | None = None,
+        extra_metadata_fields: dict[str, list] | None = None,
     ) -> tuple[int, Exception | None]:
         """Insert data using multiple parallel clients for better performance."""
         import concurrent.futures
@@ -408,14 +430,21 @@ class OSSOpenSearch(VectorDB):
 
         for i in range(0, len(embeddings_list), chunk_size):
             end = min(i + chunk_size, len(embeddings_list))
-            chunks.append((embeddings_list[i:end], metadata[i:end], labels_data[i:end]))
+            # Slice extra_metadata_fields for this chunk
+            chunk_extra_metadata = None
+            if extra_metadata_fields:
+                chunk_extra_metadata = {
+                    field_name: field_values[i:end]
+                    for field_name, field_values in extra_metadata_fields.items()
+                }
+            chunks.append((embeddings_list[i:end], metadata[i:end], labels_data[i:end] if labels_data else None, chunk_extra_metadata))
         clients = [OpenSearch(**self.db_config) for _ in range(min(num_clients, len(chunks)))]
         log.info(f"OSS_OpenSearch using {len(clients)} parallel clients for data insertion")
 
         def insert_chunk(client_idx: int, chunk_idx: int):
-            chunk_embeddings, chunk_metadata, chunk_labels_data = chunks[chunk_idx]
+            chunk_embeddings, chunk_metadata, chunk_labels_data, chunk_extra_metadata = chunks[chunk_idx]
             client = clients[client_idx]
-            insert_data = self._prepare_bulk_data(chunk_embeddings, chunk_metadata, chunk_labels_data)
+            insert_data = self._prepare_bulk_data(chunk_embeddings, chunk_metadata, chunk_labels_data, chunk_extra_metadata)
             try:
                 response = client.bulk(body=insert_data)
                 log.info(f"Client {client_idx} added {len(response['items'])} documents")
@@ -443,7 +472,7 @@ class OSSOpenSearch(VectorDB):
         if errors:
             log.warning("Some clients failed to insert data, retrying with single client")
             time.sleep(10)
-            return self._insert_with_single_client(embeddings, metadata, labels_data)
+            return self._insert_with_single_client(embeddings, metadata, labels_data, extra_metadata_fields)
 
         response = self.client.indices.stats(self.index_name)
         log.info(
@@ -476,32 +505,65 @@ class OSSOpenSearch(VectorDB):
         except Exception as e:
             log.warning(f"Failed to update ef_search parameter before search: {e}")
 
+    def _remove_nulls(self, obj):
+        """Recursively remove null values from dict/list.
+        
+        This is needed because parquet stores queries as structs,
+        and schema merging adds null values for missing fields.
+        OpenSearch fails to parse queries with null values.
+        """
+        if isinstance(obj, dict):
+            return {k: self._remove_nulls(v) for k, v in obj.items() if v is not None}
+        elif isinstance(obj, list):
+            return [self._remove_nulls(item) for item in obj if item is not None]
+        else:
+            return obj
+
     def search_embedding(
         self,
-        query: list[float],
+        query: list[float] | dict,
         k: int = 100,
         filters: Filter | None = None,
         **kwargs,
-    ) -> list[int]:
+    ) -> list[int] | list[str]:
         """Get k most similar embeddings to query vector.
 
         Args:
-            query(list[float]): query embedding to look up documents similar to.
+            query: Either a list[float] (query embedding) or dict (full OpenSearch query struct).
+                   If dict, it's used directly as the search body (for custom production queries).
             k(int): Number of most similar embeddings to return. Defaults to 100.
             filters(Filter, optional): filtering expression to filter the data while searching.
 
         Returns:
-            list[int]: list of k most similar ids to the query embedding.
+            list[int] | list[str]: list of k most similar ids to the query embedding.
         """
         assert self.client is not None, "should self.init() first"
 
-        search_query_builder = SearchQueryBuilder(self.case_config, self.vector_col_name)
-        body = search_query_builder.build_knn_query(query, k, self.filter)
+        # Check if query is a full query struct (dict) or just a vector (list)
+        if isinstance(query, dict):
+            # Full query struct from custom production queries
+            # Clean nulls that may have been added during parquet schema merging
+            body = self._remove_nulls(query)
+            # Use k from the query's size field if present, otherwise use passed k
+            k = body.get("size", k)
+        else:
+            # Traditional vector - build KNN query internally
+            search_query_builder = SearchQueryBuilder(self.case_config, self.vector_col_name)
+            body = search_query_builder.build_knn_query(query, k, self.filter)
 
         try:
-            search_kwargs = search_query_builder.build_search_kwargs(
-                self.index_name, body, k, self.id_col_name, self.routing_key
-            )
+            # Build search kwargs
+            if isinstance(query, dict):
+                # For full query struct, use simpler search kwargs
+                search_kwargs = {
+                    "index": self.index_name,
+                    "body": body,
+                }
+            else:
+                search_query_builder = SearchQueryBuilder(self.case_config, self.vector_col_name)
+                search_kwargs = search_query_builder.build_search_kwargs(
+                    self.index_name, body, k, self.id_col_name, self.routing_key
+                )
             response = self.client.search(**search_kwargs)
 
             log.debug(f"Search took: {response['took']}")
@@ -509,16 +571,16 @@ class OSSOpenSearch(VectorDB):
             log.debug(f"Search hits total: {response['hits']['total']}")
             try:
                 if self.id_col_name == "_id":
-                    # Get _id directly from hit metadata
+                    # Get _id directly from hit metadata (keep as string for production data compatibility)
                     result_ids = []
                     for h in response["hits"]["hits"]:
                         if (doc_id := h.get("_id")) is not None:
-                            result_ids.append(int(doc_id))
+                            result_ids.append(doc_id)  # Keep as string
                         else:
                             log.warning(f"Hit missing _id in final extraction: {h}")
                 else:
-                    # Get custom id field from docvalue fields
-                    result_ids = [int(h["fields"][self.id_col_name][0]) for h in response["hits"]["hits"]]
+                    # Get custom id field from docvalue fields (keep as string)
+                    result_ids = [str(h["fields"][self.id_col_name][0]) for h in response["hits"]["hits"]]
 
             except Exception:
                 # empty results
