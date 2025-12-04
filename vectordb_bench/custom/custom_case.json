@@ -14,5 +14,33 @@
             "use_shuffled": false,
             "with_gt": true
         }
+    },
+    {
+        "case_type": "streaming",
+        "description": "",
+        "dataset_config": {
+            "name": "My Streaming Dataset",
+            "dir": "/my_dataset_path",
+            "size": 100000,
+            "dim": 768,
+            "metric_type": "L2",
+            "file_count": 3,
+            "use_shuffled": false,
+            "with_gt": true,
+            "train_name": "shuffle_train",
+            "test_name": "test",
+            "gt_name": "neighbors",
+            "train_id_name": "id",
+            "train_col_name": "emb",
+            "test_col_name": "emb",
+            "gt_col_name": "neighbors_id",
+            "scalar_labels_name": "scalar_labels",
+            "label_percentages": [],
+            "with_label_percentages": [
+                0.001,
+                0.02,
+                0.5
+            ]
+        }
     }
 ]
