@@ -74,10 +74,26 @@ class SerialInsertRunner:
                     else:
                         labels_data = data_df[self.filters.label_field].tolist()
 
+                # Extract extra metadata fields from parquet (hardcoded for ticket dataset)
+                extra_metadata_fields = None
+                extra_field_names = ["_tenant", "account_id", "workspace_id", "ticket_id",
+                                     "ticket_type", "ticket_status", "catalog_item_ids", "created_at"]
+                # Check if these columns exist in the dataframe
+                log.info(f"DataFrame columns: {list(data_df.columns)}")
+                available_extra_fields = [f for f in extra_field_names if f in data_df.columns]
+                log.info(f"Available extra fields: {available_extra_fields}")
+                if available_extra_fields:
+                    extra_metadata_fields = {
+                        field: data_df[field].tolist()
+                        for field in available_extra_fields
+                    }
+                    log.info(f"Extracted {len(available_extra_fields)} extra metadata fields")
+
                 insert_count, error = self.db.insert_embeddings(
                     embeddings=all_embeddings,
                     metadata=all_metadata,
                     labels_data=labels_data,
+                    extra_metadata_fields=extra_metadata_fields,
                 )
                 if error is not None:
                     self.retry_insert(
@@ -213,8 +229,8 @@ class SerialSearchRunner:
     def __init__(
         self,
         db: api.VectorDB,
-        test_data: list[list[float]],
-        ground_truth: list[list[int]],
+        test_data: list[list[float]] | list[dict],  # Support both vectors and full query structs
+        ground_truth: list[list[int]] | list[list[str]],  # Support both int and string IDs
         k: int = 100,
         filters: Filter = non_filter,
     ):
@@ -228,13 +244,13 @@ class SerialSearchRunner:
             self.test_data = test_data
         self.ground_truth = ground_truth
 
-    def _get_db_search_res(self, emb: list[float], retry_idx: int = 0) -> list[int]:
+    def _get_db_search_res(self, query: list[float] | dict, retry_idx: int = 0) -> list[int] | list[str]:
         try:
-            results = self.db.search_embedding(emb, self.k)
+            results = self.db.search_embedding(query, self.k)
         except Exception as e:
             log.warning(f"Serial search failed, retry_idx={retry_idx}, Exception: {e}")
             if retry_idx < config.MAX_SEARCH_RETRY:
-                return self._get_db_search_res(emb=emb, retry_idx=retry_idx + 1)
+                return self._get_db_search_res(query=query, retry_idx=retry_idx + 1)
 
             msg = f"Serial search failed and retried more than {config.MAX_SEARCH_RETRY} times"
             raise RuntimeError(msg) from e
@@ -252,10 +268,10 @@ class SerialSearchRunner:
             log.debug(f"ground truth size: {len(ground_truth)}")
 
             latencies, recalls, ndcgs = [], [], []
-            for idx, emb in enumerate(test_data):
+            for idx, query in enumerate(test_data):
                 s = time.perf_counter()
                 try:
-                    results = self._get_db_search_res(emb)
+                    results = self._get_db_search_res(query)
                 except Exception as e:
                     log.warning(f"VectorDB search_embedding error: {e}")
                     raise e from None

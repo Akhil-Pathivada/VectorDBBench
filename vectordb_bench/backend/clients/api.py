@@ -221,7 +221,7 @@ class VectorDB(ABC):
         self,
         query: list[float],
         k: int = 100,
-    ) -> list[int]:
+    ) -> list[int] | list[str]:
         """Get k most similar embeddings to query vector.
 
         Args:
@@ -230,7 +230,7 @@ class VectorDB(ABC):
             filters(dict, optional): filtering expression to filter the data while searching.
 
         Returns:
-            list[int]: list of k most similar embeddings IDs to the query embedding.
+            list[int] | list[str]: list of k most similar embeddings IDs to the query embedding.
         """
         raise NotImplementedError
 
