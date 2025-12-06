@@ -56,7 +56,9 @@ class ReadWriteRunner(MultiProcessingSearchRunner, RatedMultiThreadingInsertRunn
             f"stage_search_dur={read_dur_after_write}",
         )
 
-        if normalize:
+        # Skip normalization for custom query structs (dicts)
+        # Only normalize if test_data contains vectors (lists of floats)
+        if normalize and dataset.test_data and not isinstance(dataset.test_data[0], dict):
             test_emb = np.array(dataset.test_data)
             test_emb = test_emb / np.linalg.norm(test_emb, axis=1)[:, np.newaxis]
             test_emb = test_emb.tolist()

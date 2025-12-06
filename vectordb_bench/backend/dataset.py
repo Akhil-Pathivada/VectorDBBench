@@ -301,8 +301,8 @@ class DatasetManager(BaseModel):
     """
 
     data: BaseDataset
-    test_data: list[list[float]] | None = None
-    gt_data: list[list[int]] | None = None
+    test_data: list[list[float]] | list[dict] | None = None  # Support both vectors and full query structs
+    gt_data: list[list[int]] | list[list[str]] | None = None  # Support both int and string IDs
     scalar_labels: pl.DataFrame | None = None
     train_files: list[str] = []
     reader: DatasetReader | None = None

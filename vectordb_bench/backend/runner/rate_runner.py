@@ -34,15 +34,27 @@ class RatedMultiThreadingInsertRunner:
         self.executing_futures = []
         self.sig_idx = 0
 
-    def send_insert_task(self, db: api.VectorDB, emb: list[list[float]], metadata: list[str]):
-        def _insert_embeddings(db: api.VectorDB, emb: list[list[float]], metadata: list[str], retry_idx: int = 0):
-            _, error = db.insert_embeddings(emb, metadata)
+    def send_insert_task(
+        self,
+        db: api.VectorDB,
+        emb: list[list[float]],
+        metadata: list[str],
+        extra_metadata_fields: dict[str, list] | None = None,
+    ):
+        def _insert_embeddings(
+            db: api.VectorDB,
+            emb: list[list[float]],
+            metadata: list[str],
+            extra_metadata_fields: dict[str, list] | None = None,
+            retry_idx: int = 0,
+        ):
+            _, error = db.insert_embeddings(emb, metadata, extra_metadata_fields=extra_metadata_fields)
             if error is not None:
                 log.warning(f"Insert Failed, try_idx={retry_idx}, Exception: {error}")
                 retry_idx += 1
                 if retry_idx <= config.MAX_INSERT_RETRY:
                     time.sleep(retry_idx)
-                    _insert_embeddings(db, emb=emb, metadata=metadata, retry_idx=retry_idx)
+                    _insert_embeddings(db, emb=emb, metadata=metadata, extra_metadata_fields=extra_metadata_fields, retry_idx=retry_idx)
                 else:
                     msg = f"Insert failed and retried more than {config.MAX_INSERT_RETRY} times"
                     raise RuntimeError(msg) from None
@@ -52,7 +64,7 @@ class RatedMultiThreadingInsertRunner:
             #   so we need to copy the db object, make sure each thread has its own connection
             db_copy = deepcopy(db)
             with db_copy.init():
-                _insert_embeddings(db_copy, emb, metadata, retry_idx=0)
+                _insert_embeddings(db_copy, emb, metadata, extra_metadata_fields, retry_idx=0)
         elif db.name == "Doris":
             # DorisVectorClient is not thread-safe. Similar to pgvector, create a per-thread client
             # by deep-copying the wrapper and forcing lazy re-init inside the thread.
@@ -64,9 +76,9 @@ class RatedMultiThreadingInsertRunner:
             except Exception:
                 log.debug("Failed to reset Doris client or table on thread-local copy", exc_info=True)
             with db_copy.init():
-                _insert_embeddings(db_copy, emb, metadata, retry_idx=0)
+                _insert_embeddings(db_copy, emb, metadata, extra_metadata_fields, retry_idx=0)
         else:
-            _insert_embeddings(db, emb, metadata, retry_idx=0)
+            _insert_embeddings(db, emb, metadata, extra_metadata_fields, retry_idx=0)
 
     @time_it
     def run_with_rate(self, q: mp.Queue):
@@ -76,8 +88,10 @@ class RatedMultiThreadingInsertRunner:
             def submit_by_rate() -> bool:
                 rate = self.batch_rate
                 for data in self.dataset:
-                    emb, metadata = get_data(data, self.normalize)
-                    self.executing_futures.append(executor.submit(self.send_insert_task, self.db, emb, metadata))
+                    emb, metadata, extra_metadata_fields = get_data(data, self.normalize)
+                    self.executing_futures.append(
+                        executor.submit(self.send_insert_task, self.db, emb, metadata, extra_metadata_fields)
+                    )
                     rate -= 1
 
                     if rate == 0:

@@ -12,7 +12,21 @@
             "metric_type": "L2",
             "file_count": 1,
             "use_shuffled": false,
-            "with_gt": true
+            "with_gt": true,
+            "train_name": "train",
+            "test_name": "test",
+            "gt_name": "neighbors",
+            "train_id_name": "id",
+            "train_col_name": "emb",
+            "test_col_name": "emb",
+            "gt_col_name": "neighbors_id",
+            "scalar_labels_name": "scalar_labels",
+            "label_percentages": [],
+            "with_label_percentages": [
+                0.001,
+                0.02,
+                0.5
+            ]
         }
     },
     {
@@ -20,12 +34,27 @@
         "description": "This is a custom streaming dataset.",
         "dataset_config": {
             "name": "My Streaming Dataset",
-            "dir": "/my_dataset_path",
+            "dir": "/Users/akpathivada/Downloads/streaming_test",
             "size": 1000000,
             "dim": 1024,
+            "metric_type": "COSINE",
             "file_count": 1,
-            "train_name": "shuffle_train",
-            "with_gt": true
+            "use_shuffled": false,
+            "with_gt": true,
+            "train_name": "shuffle_train_00",
+            "test_name": "queries",
+            "gt_name": "neighbors",
+            "train_id_name": "id",
+            "train_col_name": "emb",
+            "test_col_name": "query",
+            "gt_col_name": "neighbors",
+            "scalar_labels_name": "scalar_labels",
+            "label_percentages": [],
+            "with_label_percentages": [
+                0.001,
+                0.02,
+                0.5
+            ]
         }
     }
 ]
