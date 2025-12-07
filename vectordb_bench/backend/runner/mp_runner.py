@@ -8,6 +8,7 @@ from collections.abc import Iterable
 from multiprocessing.queues import Queue
 
 import numpy as np
+from hdrh.histogram import HdrHistogram
 
 from vectordb_bench.backend.filter import Filter, non_filter
 
@@ -237,23 +238,37 @@ class MultiProcessingSearchRunner:
 
                         qps = round(all_success_count / cost, 4)
                         
-                        # Collect and calculate latencies
-                        all_latencies = []
-                        for r in res:
-                            if len(r) > 2 and r[2]:  # Has latency data
-                                all_latencies.extend(r[2])
+                        # Aggregate latency statistics from all worker processes
+                        # Each process returns pre-computed stats via HDR Histogram
+                        latency_stats_list = [
+                            r[2] for r in res 
+                            if r[2] and r[2].get('count', 0) > 0
+                        ]
                         
-                        # Calculate percentiles
-                        if all_latencies:
-                            latency_p99 = np.percentile(all_latencies, 99)
-                            latency_p95 = np.percentile(all_latencies, 95)
-                            latency_avg = np.mean(all_latencies)
+                        if latency_stats_list:
+                            total_query_count = sum(stats['count'] for stats in latency_stats_list)
+                            
+                            if total_query_count > 0:
+                                # p99/p95: Use MAX for conservative estimate
+                                # (true combined percentile is guaranteed <= max of individual percentiles)
+                                latency_p99 = max(stats['p99'] for stats in latency_stats_list)
+                                latency_p95 = max(stats['p95'] for stats in latency_stats_list)
+                                
+                                # avg: Use weighted average (mathematically exact)
+                                latency_avg = sum(
+                                    stats['avg'] * stats['count'] 
+                                    for stats in latency_stats_list
+                                ) / total_query_count
+                            else:
+                                latency_p99 = 0
+                                latency_p95 = 0
+                                latency_avg = 0
                         else:
                             latency_p99 = 0
                             latency_p95 = 0
                             latency_avg = 0
                         
-                        # Store in lists
+                        # Store metrics for this concurrency level
                         conc_num_list.append(conc)
                         conc_qps_list.append(qps)
                         conc_latency_p99_list.append(latency_p99)
@@ -291,12 +306,12 @@ class MultiProcessingSearchRunner:
             conc_latency_avg_list,
         )
 
-    def search_by_dur(self, dur: int, test_data: list[list[float]], q: mp.Queue, cond: mp.Condition) -> tuple[int, int, list]:
+    def search_by_dur(self, dur: int, test_data: list[list[float]], q: mp.Queue, cond: mp.Condition) -> tuple[int, int, dict]:
         """
         Returns:
             int: successful requests count
             int: failed requests count
-            list: latencies of successful requests
+            dict: latency statistics with p99, p95, avg, count (computed via HDR Histogram)
         """
         # sync all process
         q.put(1)
@@ -307,16 +322,21 @@ class MultiProcessingSearchRunner:
             self.db.prepare_filter(self.filters)
             num, idx = len(test_data), random.randint(0, len(test_data) - 1)
 
+            # HDR Histogram: 1μs to 60s range, 3 significant digits (~0.1% accuracy)
+            # Memory-efficient: ~20KB fixed regardless of query count
+            histogram = HdrHistogram(1, 60_000_000, 3)
+
             start_time = time.perf_counter()
             success_count = 0
             failed_cnt = 0
-            latencies = []
             while time.perf_counter() < start_time + dur:
                 s = time.perf_counter()
                 try:
                     self.db.search_embedding(test_data[idx], self.k)
                     success_count += 1
-                    latencies.append(time.perf_counter() - s)
+                    # Record latency in microseconds
+                    latency_us = int((time.perf_counter() - s) * 1_000_000)
+                    histogram.record_value(min(latency_us, 60_000_000))  # Cap at max
                 except Exception as e:
                     failed_cnt += 1
                     # reduce log
@@ -330,8 +350,7 @@ class MultiProcessingSearchRunner:
 
                 if success_count % 500 == 0:
                     log.debug(
-                        f"({mp.current_process().name:16}) search_count: {success_count}, "
-                        f"latest_latency={time.perf_counter()-s}",
+                        f"({mp.current_process().name:16}) search_count: {success_count}",
                     )
 
         total_dur = round(time.perf_counter() - start_time, 4)
@@ -341,4 +360,13 @@ class MultiProcessingSearchRunner:
             f"qps (successful) in this process: {round(success_count / total_dur, 4):3}",
         )
 
-        return success_count, failed_cnt, latencies
+        # Return pre-computed percentiles instead of raw latencies
+        # This avoids transferring large latency lists across process boundaries
+        latency_stats = {
+            'p99': histogram.get_value_at_percentile(99) / 1_000_000,  # μs → seconds
+            'p95': histogram.get_value_at_percentile(95) / 1_000_000,
+            'avg': histogram.get_mean_value() / 1_000_000,
+            'count': histogram.get_total_count(),
+        }
+
+        return success_count, failed_cnt, latency_stats
