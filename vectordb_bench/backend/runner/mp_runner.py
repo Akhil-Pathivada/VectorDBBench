@@ -19,6 +19,12 @@ from ..clients import api
 NUM_PER_BATCH = config.NUM_PER_BATCH
 log = logging.getLogger(__name__)
 
+# HDR Histogram constants
+HDR_HISTOGRAM_MIN_US = 1              # 1 microsecond
+HDR_HISTOGRAM_MAX_US = 60_000_000     # 60 seconds in microseconds
+HDR_HISTOGRAM_SIGNIFICANT_DIGITS = 3  # ±0.1% accuracy
+US_TO_SECONDS = 1_000_000             # Microseconds to seconds conversion
+
 
 class MultiProcessingSearchRunner:
     """multiprocessing search runner
@@ -322,9 +328,12 @@ class MultiProcessingSearchRunner:
             self.db.prepare_filter(self.filters)
             num, idx = len(test_data), random.randint(0, len(test_data) - 1)
 
-            # HDR Histogram: 1μs to 60s range, 3 significant digits (~0.1% accuracy)
-            # Memory-efficient: ~20KB fixed regardless of query count
-            histogram = HdrHistogram(1, 60_000_000, 3)
+            # HDR Histogram: Memory-efficient (~20KB fixed) regardless of query count
+            histogram = HdrHistogram(
+                HDR_HISTOGRAM_MIN_US, 
+                HDR_HISTOGRAM_MAX_US, 
+                HDR_HISTOGRAM_SIGNIFICANT_DIGITS
+            )
 
             start_time = time.perf_counter()
             success_count = 0
@@ -335,8 +344,8 @@ class MultiProcessingSearchRunner:
                     self.db.search_embedding(test_data[idx], self.k)
                     success_count += 1
                     # Record latency in microseconds
-                    latency_us = int((time.perf_counter() - s) * 1_000_000)
-                    histogram.record_value(min(latency_us, 60_000_000))  # Cap at max
+                    latency_us = int((time.perf_counter() - s) * US_TO_SECONDS)
+                    histogram.record_value(min(latency_us, HDR_HISTOGRAM_MAX_US))
                 except Exception as e:
                     failed_cnt += 1
                     # reduce log
@@ -363,9 +372,9 @@ class MultiProcessingSearchRunner:
         # Return pre-computed percentiles instead of raw latencies
         # This avoids transferring large latency lists across process boundaries
         latency_stats = {
-            'p99': histogram.get_value_at_percentile(99) / 1_000_000,  # μs → seconds
-            'p95': histogram.get_value_at_percentile(95) / 1_000_000,
-            'avg': histogram.get_mean_value() / 1_000_000,
+            'p99': histogram.get_value_at_percentile(99) / US_TO_SECONDS,
+            'p95': histogram.get_value_at_percentile(95) / US_TO_SECONDS,
+            'avg': histogram.get_mean_value() / US_TO_SECONDS,
             'count': histogram.get_total_count(),
         }
 
