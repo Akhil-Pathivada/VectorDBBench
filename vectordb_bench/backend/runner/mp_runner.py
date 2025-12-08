@@ -20,10 +20,10 @@ NUM_PER_BATCH = config.NUM_PER_BATCH
 log = logging.getLogger(__name__)
 
 # HDR Histogram constants
-HDR_HISTOGRAM_MIN_US = 1              # 1 microsecond
-HDR_HISTOGRAM_MAX_US = 60_000_000     # 60 seconds in microseconds
-HDR_HISTOGRAM_SIGNIFICANT_DIGITS = 3  # ±0.1% accuracy
-US_TO_SECONDS = 1_000_000             # Microseconds to seconds conversion
+HDR_HISTOGRAM_MIN_US = 1
+HDR_HISTOGRAM_MAX_US = 60_000_000      # 60 seconds
+HDR_HISTOGRAM_SIGNIFICANT_DIGITS = 3   # ±0.1% accuracy
+US_TO_SECONDS = 1_000_000
 
 
 class MultiProcessingSearchRunner:
@@ -244,8 +244,7 @@ class MultiProcessingSearchRunner:
 
                         qps = round(all_success_count / cost, 4)
                         
-                        # Aggregate latency statistics from all worker processes
-                        # Each process returns pre-computed stats via HDR Histogram
+                        # Aggregate latency stats from worker processes
                         latency_stats_list = [
                             r[2] for r in res 
                             if r[2] and r[2].get('count', 0) > 0
@@ -255,12 +254,11 @@ class MultiProcessingSearchRunner:
                             total_query_count = sum(stats['count'] for stats in latency_stats_list)
                             
                             if total_query_count > 0:
-                                # p99/p95: Use MAX for conservative estimate
-                                # (true combined percentile is guaranteed <= max of individual percentiles)
+                                # Use max for conservative percentile estimate
                                 latency_p99 = max(stats['p99'] for stats in latency_stats_list)
                                 latency_p95 = max(stats['p95'] for stats in latency_stats_list)
                                 
-                                # avg: Use weighted average (mathematically exact)
+                                # Weighted average
                                 latency_avg = sum(
                                     stats['avg'] * stats['count'] 
                                     for stats in latency_stats_list
@@ -274,7 +272,6 @@ class MultiProcessingSearchRunner:
                             latency_p95 = 0
                             latency_avg = 0
                         
-                        # Store metrics for this concurrency level
                         conc_num_list.append(conc)
                         conc_qps_list.append(qps)
                         conc_latency_p99_list.append(latency_p99)
@@ -328,7 +325,7 @@ class MultiProcessingSearchRunner:
             self.db.prepare_filter(self.filters)
             num, idx = len(test_data), random.randint(0, len(test_data) - 1)
 
-            # HDR Histogram: Memory-efficient (~20KB fixed) regardless of query count
+            # Memory-efficient latency tracking
             histogram = HdrHistogram(
                 HDR_HISTOGRAM_MIN_US, 
                 HDR_HISTOGRAM_MAX_US, 
@@ -343,7 +340,6 @@ class MultiProcessingSearchRunner:
                 try:
                     self.db.search_embedding(test_data[idx], self.k)
                     success_count += 1
-                    # Record latency in microseconds
                     latency_us = int((time.perf_counter() - s) * US_TO_SECONDS)
                     histogram.record_value(min(latency_us, HDR_HISTOGRAM_MAX_US))
                 except Exception as e:
@@ -369,8 +365,7 @@ class MultiProcessingSearchRunner:
             f"qps (successful) in this process: {round(success_count / total_dur, 4):3}",
         )
 
-        # Return pre-computed percentiles instead of raw latencies
-        # This avoids transferring large latency lists across process boundaries
+        # Pre-computed stats to avoid large data transfer
         latency_stats = {
             'p99': histogram.get_value_at_percentile(99) / US_TO_SECONDS,
             'p95': histogram.get_value_at_percentile(95) / US_TO_SECONDS,
