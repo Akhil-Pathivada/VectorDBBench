@@ -14,10 +14,10 @@ def drawConcurrentPerformanceSection(container, case_data, case_name: str):
         return
     
     container.markdown("---")
-    container.subheader("🔍 Concurrent Performance Detail")
+    container.subheader("Concurrent Search Performance")
     container.markdown(
         "Detailed Latency → QPS relationship at each stage. "
-        "Shows how search performance changes with different load levels."
+        "Displays how latency and QPS vary with concurrency."
     )
     
     # View mode selector
@@ -60,7 +60,7 @@ def drawSingleStageView(container, case_data, case_name: str):
     # Check if this stage has concurrent data
     if not case_data["st_conc_qps_list_list"][stage_idx]:
         container.warning(
-            f"⚠️ No concurrent performance data for {stage}% stage.\n\n"
+            f"No concurrent search data for {stage}% stage.\n\n"
             f"**Reason:** Concurrent tests were skipped because there wasn't enough time "
             f"between stages (< 10s per concurrency level).\n\n"
             f"**Tip:** Use a larger dataset or slower insert rate to get data for all stages."
@@ -244,7 +244,7 @@ def drawComparisonChart(container, case_data, selected_stages, metric_name, case
     # Check if any data was plotted
     if stages_plotted == 0:
         container.warning(
-            f"⚠️ None of the selected stages have concurrent performance data.\n\n"
+            f"None of the selected stages have concurrent search data.\n\n"
             f"**Skipped stages:** {', '.join([f'{s}%' for s in stages_skipped])}\n\n"
             f"**Reason:** Concurrent tests were skipped because there wasn't enough time "
             f"between stages (< 10s per concurrency level).\n\n"
@@ -255,7 +255,7 @@ def drawComparisonChart(container, case_data, selected_stages, metric_name, case
     # Show warning for skipped stages
     if stages_skipped:
         container.info(
-            f"ℹ️ Skipped stages with no concurrent data: {', '.join([f'{s}%' for s in stages_skipped])}"
+            f"Stages without data: {', '.join([f'{s}%' for s in stages_skipped])}"
         )
     
     fig.update_layout(
@@ -276,8 +276,6 @@ def drawComparisonChart(container, case_data, selected_stages, metric_name, case
     
     # Add insight
     container.info(
-        "💡 **Insight**: As data grows (from early to late stages), "
-        "you can observe how both QPS capacity and latency change. "
-        "This helps predict production performance as your database scales."
+        "**Insight:** Compare curves across stages to understand how performance scales with data growth."
     )
 
